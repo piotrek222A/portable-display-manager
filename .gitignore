@@ -1,21 +1,14 @@
-# Node / build
 node_modules/
 dist/
 out/
 build/
-# Logs
 *.log
-# Environment / secrets
 .env
 .env.*.local
-# Certs
 *.pem
-# OS
 .DS_Store
 Thumbs.db
-# Editor
 .vscode/
 .idea/
-# Electron / output
 electron/log.txt
 server/log.txt

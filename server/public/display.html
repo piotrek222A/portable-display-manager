@@ -8,7 +8,7 @@ html,body{
   margin:0;padding:0;width:100%;height:100%;background:#000;color:#fff;overflow:hidden;
 }
 #wrapper{
-  position:fixed; /* zajmuje cały ekran */
+  position:fixed;
   left:0;top:0;right:0;bottom:0;
   display:flex;align-items:stretch;justify-content:stretch;
 }
@@ -16,37 +16,30 @@ html,body{
   width:100%;height:100%;
   display:flex;align-items:center;justify-content:center;
   background:#000;
-  /* większy, responsywny tekst dla początkowego komunikatu "Łączenie..." */
   font-size: clamp(24px, 5vw, 56px);
   font-weight: 600;
   text-align: center;
   padding: 0 12px;
 }
-/* elementy multimedialne wypełniają przestrzeń */
 iframe,video,img{
   width:100%;height:100%;border:0;display:block;
-  object-fit:cover; /* dopasowanie - zmień na 'contain' jeśli wolisz całe media widoczne */
+  object-fit:cover;
 }
 video{background:#000;}
 </style>
 </head>
 <body>
 <div id="wrapper"><div id="content">Łączenie...</div></div>
-<!-- Dodaj klienta Socket.IO aby renderer.js w przeglądarce miał dostęp do `io()` -->
 <script src="/socket.io/socket.io.js"></script>
 <script src="renderer.js"></script>
 
-<!-- DODANO: odbiornik Presentation API oraz fallback postMessage z window.opener -->
 <script>
 (function(){
   function handleCommand(cmd) {
     try {
       if (typeof cmd === 'string') cmd = JSON.parse(cmd);
-    } catch(e){ /* ignore parse error */ }
-
+    } catch(e){}
     if (!cmd || typeof cmd !== 'object') return;
-
-    // jeśli funkcje z renderer.js są dostępne, wywołaj je bezpośrednio
     if (typeof window.showCustomText === 'function' && typeof window.startPlaylist === 'function' && typeof window.stopPlaylist === 'function') {
       if (cmd.action === 'showText') {
         window.showCustomText(cmd.text || '', typeof cmd.duration === 'number' ? cmd.duration : 0);
@@ -57,13 +50,10 @@ video{background:#000;}
       }
       return;
     }
-
-    // inaczej zbuforuj komendę — renderer.js powinien je odczytać po załadowaniu
     window._pendingPresentationCommands = window._pendingPresentationCommands || [];
     window._pendingPresentationCommands.push(cmd);
   }
 
-  // PresentationReceiver (nowoczesne API)
   try {
     if ('presentation' in navigator && navigator.presentation.receiver) {
       navigator.presentation.receiver.connectionList
@@ -73,31 +63,26 @@ video{background:#000;}
         })
         .catch(err => console.warn('presentation.receiver.connectionList error', err));
     }
-  } catch(e) { /* ignore */ }
+  } catch(e) {}
 
-  // fallback: jeśli otwarte jako nowa karta okna z window.opener -> nasłuchuj postMessage
   window.addEventListener('message', (ev) => {
-    // akceptuj komunikaty tylko z tego samego origin dla bezpieczeństwa
     try {
       if (ev.origin !== location.origin) return;
     } catch(e) {}
     handleCommand(ev.data);
   }, false);
 
-  // helper: setup dla pojedynczego PresentationConnection
   function setupConn(connection) {
     try {
       connection.onmessage = (evt) => handleCommand(evt.data);
       connection.onclose = () => console.log('Presentation connection closed');
       connection.onterminate = () => console.log('Presentation connection terminated');
-      // opcjonalnie potwierdź odbiór
       try { connection.postMessage('ack'); } catch(e){}
     } catch(e) {
       console.warn('setupConn error', e);
     }
   }
 
-  // expose handleCommand dla ewentualnego bezpośredniego wywołania
   window._handlePresentationCommand = handleCommand;
 })();
 </script>

@@ -2,7 +2,6 @@ console.log('Init renderer');
 
 const content = document.getElementById('content');
 
-// 🔹 Socket.IO: wybór połączenia
 let socket;
 
 if (window.api && window.api.socket) {
@@ -16,7 +15,6 @@ if (window.api && window.api.socket) {
     socket = { on: () => {}, emit: () => {} };
 }
 
-// DODANE: wykrywanie stanu połączenia i timeout na brak połączenia
 let socketConnected = false;
 const SOCKET_CONNECT_TIMEOUT_MS = 4000;
 let socketConnectTimer = setTimeout(() => {
@@ -45,20 +43,17 @@ if (socket && typeof socket.on === 'function') {
   });
 }
 
-// 🔹 Playlista
 let playlist = [];
 let index = 0;
 let loop = false;
 let timer = null;
 
-// 🔹 Podstawowe style dla kontenera
 content.style.width = '100%';
 content.style.height = '100%';
 content.style.display = 'flex';
 content.style.alignItems = 'center';
 content.style.justifyContent = 'center';
 
-// 🔹 Helpery
 function clearContent() {
     content.innerHTML = '';
 }
@@ -106,7 +101,6 @@ function showCustomText(text, durationSec, keepPlaylist = false) {
     }
 }
 
-// 🔹 Wyświetlanie treści
 function setIframe(url, attempt = 1) {
     clearContent();
 
@@ -142,7 +136,6 @@ function playVideo(url) {
     v.autoplay = true;
     v.playsInline = true;
     v.controls = false;
-    // zaczynamy bez mute — chcemy dźwięk jeśli polityka na to pozwala
     v.muted = false;
     v.style.width = '100%';
     v.style.height = '100%';
@@ -176,17 +169,14 @@ function playVideo(url) {
             console.log('Wideo odtwarzane z dźwiękiem');
         }).catch(async (err) => {
             console.warn('Autoplay z dźwiękiem zablokowany:', err);
-            // spróbuj autoplay z muted (bez dźwięku)
             try {
                 v.muted = true;
                 const p2 = await v.play();
                 console.log('Wideo odtwarzane w trybie muted (fallback).');
-                // pokaż przycisk unmute aby użytkownik mógł włączyć dźwięk
                 const unmuteBtn = createUnmuteButton();
                 content.appendChild(unmuteBtn);
             } catch (e2) {
                 console.warn('Muted autoplay też nie zadziałał:', e2);
-                // pokaż nakładkę wymagającą interakcji, która uruchomi odtwarzanie z dźwiękiem
                 const overlay = document.createElement('div');
                 overlay.style.position = 'absolute';
                 overlay.style.left = '0';
@@ -233,7 +223,6 @@ function showImage(url) {
     });
 }
 
-// 🔹 Playlist logic
 function playItem(item) {
     switch(item.type) {
         case 'url': setIframe(item.url); break;
@@ -274,7 +263,6 @@ function stopPlaylist() {
     showMessage('Brak danych PDM');
 }
 
-// 🔹 Socket.IO – obsługa komend
 function handleIncomingCommand(cmd) {
     console.log('Otrzymano komendę:', cmd);
     if (!cmd || typeof cmd !== 'object') return;
@@ -300,7 +288,6 @@ function handleIncomingCommand(cmd) {
 
 socket.on('command', handleIncomingCommand);
 
-// 🔹 Eksport funkcji globalnie
 window.showCustomText = showCustomText;
 window.startPlaylist = startPlaylist;
 window.stopPlaylist = stopPlaylist;
@@ -308,7 +295,6 @@ window.nextPlaylistItem = next;
 window.clearDisplayContent = clearContent;
 window._handlePresentationCommand = handleIncomingCommand;
 
-// 🔹 Przetwarzanie zbuforowanych komend przed załadowaniem renderer.js
 try {
     if (Array.isArray(window._pendingPresentationCommands) && window._pendingPresentationCommands.length) {
         window._pendingPresentationCommands.forEach(cmd => {

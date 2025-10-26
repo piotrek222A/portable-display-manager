@@ -4,7 +4,6 @@
 <meta charset="utf-8">
 <title>Control Panel</title>
 <style>
-/* proste style panelu */
 body{font-family:Arial;margin:16px;}
 #panel{max-width:900px;}
 #playlistList{margin:8px 0;padding:0;list-style:none;}
@@ -35,7 +34,6 @@ button{padding:6px 10px;margin-right:6px;}
       <option value="text">Tekst</option>
     </select>
 
-    <!-- NOWE: wybór protokołu przed wpisaniem URL -->
     <select id="protocolSelect" style="width:90px;padding:6px;margin-right:6px;">
       <option value="https://">https://</option>
       <option value="http://">http://</option>
@@ -44,7 +42,7 @@ button{padding:6px 10px;margin-right:6px;}
     <input id="itemUrl" type="text" placeholder="URL lub tekst (dla typu Tekst wpisz treść)" style="width:330px">
     <input id="itemDuration" type="number" min="1" value="15" style="width:80px">
     <button id="addBtn">Dodaj</button>
-    <button id="openUrlBtn">Otwórz URL</button> <!-- DODANE -->
+    <button id="openUrlBtn">Otwórz URL</button>
     <button id="clearBtn">Wyczyść</button>
   </div>
 
@@ -54,7 +52,6 @@ button{padding:6px 10px;margin-right:6px;}
     <label><input type="checkbox" id="loopChk"> Zapętlaj</label>
   </div>
 
-  <!-- Dodane: kontrolka do wysyłania własnego tekstu na ekran -->
   <div style="margin-top:12px;">
     <input id="customText" type="text" placeholder="Wpisz tekst do wyświetlenia" style="width:620px;padding:6px">
     <input id="textDuration" type="number" min="0" value="10" style="width:80px" title="Czas w sekundach (0 = bez limitu)">
@@ -75,7 +72,6 @@ button{padding:6px 10px;margin-right:6px;}
     <div id="cmdError" style="color:red"></div>
   </div>
 
-  <!-- NOWY: sekcja podglądu ekranu -->
   <div style="margin-top:12px;border:1px solid #eee;padding:8px;background:#fff;color:#000;">
     <label><input type="checkbox" id="previewChk"> Włącz podgląd ekranu (tworzy dodatkowe połączenie)</label>
     <button id="previewRefreshBtn" style="margin-left:8px;">Odśwież podgląd</button>
@@ -84,7 +80,6 @@ button{padding:6px 10px;margin-right:6px;}
     </div>
   </div>
 
-  <!-- DODANE: sekcja Presentation (wysyłanie bezpośrednio do wyświetlacza) -->
   <div style="margin-top:12px;border:1px solid #eee;padding:8px;background:#fff;">
     <strong>Prezentacja (Presentation API)</strong>
     <div style="margin-top:8px;">
@@ -95,11 +90,7 @@ button{padding:6px 10px;margin-right:6px;}
   </div>
 </div>
 
-<!-- NOWY: bezpieczne inicjowanie socketu oraz odroczenie rejestracji handlerów panelu -->
 <script>
-/* ...existing code above ... */
-
-// helper: dynamiczne wczytanie skryptu
 function loadScript(src) {
   return new Promise((resolve, reject) => {
     if (document.querySelector('script[src="' + src + '"]')) return resolve();
@@ -111,18 +102,14 @@ function loadScript(src) {
   });
 }
 
-// zwraca Promise<socket>
 async function initSocket() {
-  // jeśli socket już istnieje (np. wcześniejsze uruchomienie), zwróć go
   if (window._panelSocket && typeof window._panelSocket.on === 'function') {
     console.log('initSocket: using existing socket instance');
     return window._panelSocket;
   }
 
-  // najpierw preferujemy serverUrl z Electron preload (window.api)
   let preferredServer = (window.api && window.api.serverUrl) ? window.api.serverUrl.replace(/\/$/,'') : null;
 
-  // jeśli brak preferowanego adresu, spróbuj pobrać z serwera endpoint /api/config
   if (!preferredServer) {
     try {
       const res = await fetch('/api/config');
@@ -138,7 +125,6 @@ async function initSocket() {
   const serverUrl = preferredServer || location.origin;
   try { window._panelServerUrl = serverUrl; } catch(e){}
 
-  // Najpierw spróbuj załadować lokalnego klienta (unikniemy ERR_CONNECTION_REFUSED dla remote)
   if (typeof io !== 'function') {
     try {
       await loadScript('/socket.io/socket.io.js');
@@ -148,7 +134,6 @@ async function initSocket() {
     }
   }
 
-  // Jeśli wciąż brak io(), i mamy preferredServer (remote), spróbuj wczytać remote jako fallback
   if (typeof io !== 'function' && preferredServer) {
     try {
       await loadScript(preferredServer + '/socket.io/socket.io.js');
@@ -163,17 +148,14 @@ async function initSocket() {
     return { on: ()=>{}, emit: ()=>{} };
   }
 
-  // Upewnij się, że tworzymy tylko jedno połączenie
   if (window._panelSocket && typeof window._panelSocket.on === 'function') {
     return window._panelSocket;
   }
 
   try {
-    // Tworzymy socket wskazując explicitnie serverUrl — to zapewnia poprawne połączenie do właściwego hosta (np. 10.0.0.27:3002)
     const sock = io(serverUrl, { transports: ['websocket','polling'] });
     window._panelSocket = sock;
 
-    // dodatkowe logi ułatwiające debug
     sock.on('connect', () => console.log('panel socket connected to', serverUrl, 'id=', sock.id));
     sock.on('connect_error', (err) => console.warn('panel socket connect_error', err));
     sock.on('disconnect', (reason) => console.log('panel socket disconnected', reason));
@@ -185,7 +167,6 @@ async function initSocket() {
   }
 }
 
-// centralna inicjalizacja panelu: rejestruje wszystkie handler'y korzystające z socket
 async function initPanel() {
   const socket = await initSocket();
 
@@ -197,11 +178,9 @@ async function initPanel() {
   const lastCommand = document.getElementById('lastCommand');
   const cmdError = document.getElementById('cmdError');
 
-  // const socket = io(location.origin); // <-- usunięte, używamy dynamicznego ładowania socket.io
   let token = null;
   const playlist = [];
 
-  // DODANE: Presentation API (sender)
   let presentationRequest = null;
   let presentationConnection = null;
 
@@ -241,7 +220,7 @@ async function initPanel() {
   document.getElementById('stopPresentationBtn').addEventListener('click', async () => {
     try {
       if (presentationConnection) {
-        try { presentationConnection.terminate(); } catch(e){ /* ignore */ }
+        try { presentationConnection.terminate(); } catch(e){}
         presentationConnection = null;
         updatePresentationStatus();
       }
@@ -250,13 +229,10 @@ async function initPanel() {
     }
   });
 
-  // DODANE: centralna funkcja wysyłająca komendę — najpierw Presentation, zawsze fallback/emit do socket (by wszyscy klienci dostali komendę)
   function sendCommand(cmd) {
-    // przygotuj kopię z tokenem dla serwera (jeśli znany)
     const cmdForSocket = Object.assign({}, cmd);
     if (token) cmdForSocket.token = token;
 
-    // spróbuj wysłać do Presentation (jeśli aktywne) — ale NIE przerywamy dalszego broadcastu
     if (presentationConnection) {
       try {
         const payload = (typeof cmd === 'object') ? JSON.stringify(cmd) : String(cmd);
@@ -273,9 +249,7 @@ async function initPanel() {
       }
     }
 
-    // ZAWSZE wysyłamy również do serwera, aby inne urządzenia otrzymały komendę
     try {
-      // najpierw emit przez socket (jeśli działa)
       try {
         if (socket && typeof socket.emit === 'function' && socket.connected) {
           socket.emit('send-command', cmdForSocket);
@@ -287,13 +261,11 @@ async function initPanel() {
         console.warn('socket.emit failed', e);
       }
 
-      // dodatkowo wyślij REST POST /api/send-command do wykrytego serverUrl (fallback)
       (async () => {
         try {
           const serverBase = window._panelServerUrl || location.origin;
           const url = (serverBase.replace(/\/$/,'') + '/api/send-command');
           const headers = { 'Content-Type': 'application/json' };
-          // dodaj token do header, a także do body dla pewności
           if (token) headers['Authorization'] = 'Bearer ' + token;
           const bodyObj = Object.assign({}, cmd);
           if (token) bodyObj.token = token;
@@ -326,7 +298,6 @@ async function initPanel() {
     }
   }
 
-  // helper: render playlist
   function renderPlaylist(){
     const list = document.getElementById('playlistList');
     list.innerHTML = '';
@@ -345,24 +316,20 @@ async function initPanel() {
   }
 
   document.getElementById('addBtn').onclick = () => {
-    const raw = document.getElementById('itemUrl').value; // allow empty for text
+    const raw = document.getElementById('itemUrl').value;
     const type = document.getElementById('itemType').value;
     const duration = parseInt(document.getElementById('itemDuration').value, 10) || 15;
 
-    // pobierz wybrany protokół
     const protocol = (document.getElementById('protocolSelect') || {}).value || 'https://';
 
-    // dla URL/IMAGE/VIDEO wymagamy niepustego URL, dla TEXT akceptujemy pusty string
     if (type !== 'text' && !raw.trim()) return alert('Podaj URL!');
     if (type === 'text') {
       playlist.push({ type:'text', text: raw, duration });
     } else {
       let url = raw.trim();
-      // jeśli brak protokołu, dodaj wybrany
       if (!/^https?:\/\//i.test(url)) {
         url = protocol + url;
       }
-      // dopuszczamy tylko http/https
       if (!/^https?:\/\//i.test(url)) return alert('Dozwolone tylko protokoły http:// lub https://');
       playlist.push({ type, url, duration });
     }
@@ -406,7 +373,6 @@ async function initPanel() {
   }
 
   document.getElementById('startPlaylistBtn').onclick = () => {
-    // Pozwól wysyłać przez Presentation bez tokena; w przeciwnym razie wymaga się zalogowania
     if(!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
     const loop = document.getElementById('loopChk').checked;
     cmdError.textContent = '';
@@ -420,7 +386,6 @@ async function initPanel() {
   };
 
   document.getElementById('showTextBtn').onclick = () => {
-    // Pozwól wysyłać tekst przez Presentation bez logowania; inaczej wymagaj tokena
     if (!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
     const text = document.getElementById('customText').value;
     const duration = parseInt(document.getElementById('textDuration').value, 10) || 0;
@@ -442,7 +407,6 @@ async function initPanel() {
   socket.on('disconnect', () => { console.log('socket disconnected'); });
   socket.on('command-error', (e) => { console.warn('command-error', e); cmdError.textContent = e.error || 'Błąd'; });
   socket.on('command', (cmd) => {
-    // aktualizuj widok ostatniej komendy na panelu
     lastCommand.textContent = JSON.stringify(cmd, null, 2);
     fetchStatus();
   });
@@ -459,14 +423,12 @@ async function initPanel() {
     }
   }
 
-  // Opcjonalnie: odśwież podgląd automatycznie po otrzymaniu nowej komendy (użyteczne przy debugowaniu)
   socket.on('command', () => {
     if (previewChk.checked) {
       try { previewFrame.contentWindow.location.reload(); } catch(e) { previewFrame.src = '/display.html'; }
     }
   });
 
-  // NOWY: otwórz URL natychmiast na wszystkich wyświetlaczach (przez presentation jeśli aktywne, inaczej przez socket)
   document.getElementById('openUrlBtn').addEventListener('click', () => {
     if (!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
     let raw = document.getElementById('itemUrl').value || '';
@@ -479,7 +441,6 @@ async function initPanel() {
   });
 }
 
-// uruchom inicjalizację panelu
 initPanel().catch(e => console.error('initPanel error', e));
 </script>
 
