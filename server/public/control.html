@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Control Panel</title>
+<style>
+/* proste style panelu */
+body{font-family:Arial;margin:16px;}
+#panel{max-width:900px;}
+#playlistList{margin:8px 0;padding:0;list-style:none;}
+#playlistList li{padding:6px;border:1px solid #ddd;margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;}
+input[type=text], input[type=number], select{padding:6px;margin-right:6px;}
+button{padding:6px 10px;margin-right:6px;}
+.small{font-size:12px;color:#666;}
+#statusBox{margin-top:12px;padding:8px;border:1px solid #eee;background:#fafafa;}
+</style>
+</head>
+<body>
+<div id="login">
+  <h2>Logowanie</h2>
+  <input id="username" placeholder="Login">
+  <input id="password" type="password" placeholder="Hasło">
+  <button id="loginBtn">Zaloguj</button>
+  <div id="loginMsg" style="color:red"></div>
+</div>
+
+<div id="panel" style="display:none">
+  <h2>Panel</h2>
+
+  <div>
+    <select id="itemType">
+      <option value="url">URL (iframe)</option>
+      <option value="image">Obraz</option>
+      <option value="video">Wideo</option>
+      <option value="text">Tekst</option>
+    </select>
+
+    <!-- NOWE: wybór protokołu przed wpisaniem URL -->
+    <select id="protocolSelect" style="width:90px;padding:6px;margin-right:6px;">
+      <option value="https://">https://</option>
+      <option value="http://">http://</option>
+    </select>
+
+    <input id="itemUrl" type="text" placeholder="URL lub tekst (dla typu Tekst wpisz treść)" style="width:330px">
+    <input id="itemDuration" type="number" min="1" value="15" style="width:80px">
+    <button id="addBtn">Dodaj</button>
+    <button id="openUrlBtn">Otwórz URL</button> <!-- DODANE -->
+    <button id="clearBtn">Wyczyść</button>
+  </div>
+
+  <ul id="playlistList"></ul>
+
+  <div>
+    <label><input type="checkbox" id="loopChk"> Zapętlaj</label>
+  </div>
+
+  <!-- Dodane: kontrolka do wysyłania własnego tekstu na ekran -->
+  <div style="margin-top:12px;">
+    <input id="customText" type="text" placeholder="Wpisz tekst do wyświetlenia" style="width:620px;padding:6px">
+    <input id="textDuration" type="number" min="0" value="10" style="width:80px" title="Czas w sekundach (0 = bez limitu)">
+    <button id="showTextBtn">Pokaż tekst</button>
+  </div>
+
+  <div style="margin-top:8px;">
+    <button id="startPlaylistBtn">Start</button>
+    <button id="stopPlaylistBtn">Stop</button>
+    <button id="refreshStatusBtn">Odśwież status</button>
+    <button id="logoutBtn">Wyloguj</button>
+  </div>
+
+  <div id="statusBox">
+    <div>Token: <span id="tokenLabel" class="small">brak</span></div>
+    <div>Podłączone wyświetlacze: <span id="clientsCount">0</span></div>
+    <div>Ostatnia komenda: <pre id="lastCommand" class="small"></pre></div>
+    <div id="cmdError" style="color:red"></div>
+  </div>
+
+  <!-- NOWY: sekcja podglądu ekranu -->
+  <div style="margin-top:12px;border:1px solid #eee;padding:8px;background:#fff;color:#000;">
+    <label><input type="checkbox" id="previewChk"> Włącz podgląd ekranu (tworzy dodatkowe połączenie)</label>
+    <button id="previewRefreshBtn" style="margin-left:8px;">Odśwież podgląd</button>
+    <div id="previewBox" style="margin-top:8px;display:none;border:1px solid #ccc;">
+      <iframe id="previewFrame" src="/display.html" style="width:100%;height:360px;border:0;display:block;"></iframe>
+    </div>
+  </div>
+
+  <!-- DODANE: sekcja Presentation (wysyłanie bezpośrednio do wyświetlacza) -->
+  <div style="margin-top:12px;border:1px solid #eee;padding:8px;background:#fff;">
+    <strong>Prezentacja (Presentation API)</strong>
+    <div style="margin-top:8px;">
+      <button id="startPresentationBtn">Start Presentation</button>
+      <button id="stopPresentationBtn">Zamknij Presentation</button>
+      <span id="presentationStatus" class="small" style="margin-left:8px;">(niepołączony)</span>
+    </div>
+  </div>
+</div>
+
+<!-- NOWY: bezpieczne inicjowanie socketu oraz odroczenie rejestracji handlerów panelu -->
+<script>
+/* ...existing code above ... */
+
+// helper: dynamiczne wczytanie skryptu
+function loadScript(src) {
+  return new Promise((resolve, reject) => {
+    if (document.querySelector('script[src="' + src + '"]')) return resolve();
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = () => resolve();
+    s.onerror = (e) => reject(e);
+    document.head.appendChild(s);
+  });
+}
+
+// zwraca Promise<socket>
+async function initSocket() {
+  // jeśli socket już istnieje (np. wcześniejsze uruchomienie), zwróć go
+  if (window._panelSocket && typeof window._panelSocket.on === 'function') {
+    console.log('initSocket: using existing socket instance');
+    return window._panelSocket;
+  }
+
+  // najpierw preferujemy serverUrl z Electron preload (window.api)
+  let preferredServer = (window.api && window.api.serverUrl) ? window.api.serverUrl.replace(/\/$/,'') : null;
+
+  // jeśli brak preferowanego adresu, spróbuj pobrać z serwera endpoint /api/config
+  if (!preferredServer) {
+    try {
+      const res = await fetch('/api/config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.serverUrl) preferredServer = String(data.serverUrl).replace(/\/$/,'');
+      }
+    } catch (e) {
+      console.warn('Nie udało się pobrać /api/config', e);
+    }
+  }
+
+  const serverUrl = preferredServer || location.origin;
+  try { window._panelServerUrl = serverUrl; } catch(e){}
+
+  // Najpierw spróbuj załadować lokalnego klienta (unikniemy ERR_CONNECTION_REFUSED dla remote)
+  if (typeof io !== 'function') {
+    try {
+      await loadScript('/socket.io/socket.io.js');
+      console.log('Załadowano lokalnego socket.io klienta (/socket.io/socket.io.js)');
+    } catch (e) {
+      console.warn('Local socket.io client load failed', e);
+    }
+  }
+
+  // Jeśli wciąż brak io(), i mamy preferredServer (remote), spróbuj wczytać remote jako fallback
+  if (typeof io !== 'function' && preferredServer) {
+    try {
+      await loadScript(preferredServer + '/socket.io/socket.io.js');
+      console.log('Załadowano remote socket.io klienta z', preferredServer);
+    } catch (e) {
+      console.warn('Nie udało się wczytać klienta socket.io z', preferredServer, e);
+    }
+  }
+
+  if (typeof io !== 'function') {
+    console.error('Brak klienta socket.io (io nie jest funkcją) — panel będzie działać w trybie offline');
+    return { on: ()=>{}, emit: ()=>{} };
+  }
+
+  // Upewnij się, że tworzymy tylko jedno połączenie
+  if (window._panelSocket && typeof window._panelSocket.on === 'function') {
+    return window._panelSocket;
+  }
+
+  try {
+    // Tworzymy socket wskazując explicitnie serverUrl — to zapewnia poprawne połączenie do właściwego hosta (np. 10.0.0.27:3002)
+    const sock = io(serverUrl, { transports: ['websocket','polling'] });
+    window._panelSocket = sock;
+
+    // dodatkowe logi ułatwiające debug
+    sock.on('connect', () => console.log('panel socket connected to', serverUrl, 'id=', sock.id));
+    sock.on('connect_error', (err) => console.warn('panel socket connect_error', err));
+    sock.on('disconnect', (reason) => console.log('panel socket disconnected', reason));
+
+    return sock;
+  } catch (e) {
+    console.warn('io() init failed', e);
+    return { on: ()=>{}, emit: ()=>{} };
+  }
+}
+
+// centralna inicjalizacja panelu: rejestruje wszystkie handler'y korzystające z socket
+async function initPanel() {
+  const socket = await initSocket();
+
+  const loginDiv = document.getElementById('login');
+  const panelDiv = document.getElementById('panel');
+  const loginMsg = document.getElementById('loginMsg');
+  const tokenLabel = document.getElementById('tokenLabel');
+  const clientsCount = document.getElementById('clientsCount');
+  const lastCommand = document.getElementById('lastCommand');
+  const cmdError = document.getElementById('cmdError');
+
+  // const socket = io(location.origin); // <-- usunięte, używamy dynamicznego ładowania socket.io
+  let token = null;
+  const playlist = [];
+
+  // DODANE: Presentation API (sender)
+  let presentationRequest = null;
+  let presentationConnection = null;
+
+  function updatePresentationStatus() {
+    const el = document.getElementById('presentationStatus');
+    el.textContent = presentationConnection ? ('Połączono (presentation)') : '(niepołączony)';
+  }
+
+  function initPresentationRequest() {
+    if (!('PresentationRequest' in window)) return null;
+    try {
+      const url = location.origin + '/display.html';
+      presentationRequest = new PresentationRequest([url]);
+      return presentationRequest;
+    } catch (e) {
+      console.warn('initPresentationRequest failed', e);
+      return null;
+    }
+  }
+
+  document.getElementById('startPresentationBtn').addEventListener('click', async () => {
+    if (!('PresentationRequest' in window)) return alert('Presentation API niedostępne w tej przeglądarce.');
+    if (!presentationRequest) initPresentationRequest();
+    try {
+      presentationConnection = await presentationRequest.start();
+      updatePresentationStatus();
+      presentationConnection.onmessage = (e) => console.log('From presentation:', e.data);
+      presentationConnection.onclose = () => { presentationConnection = null; updatePresentationStatus(); };
+      presentationConnection.onterminate = () => { presentationConnection = null; updatePresentationStatus(); };
+      updatePresentationStatus();
+    } catch (err) {
+      console.warn('Błąd startu Presentation:', err);
+      alert('Nie udało się uruchomić prezentacji: ' + (err && err.message ? err.message : err));
+    }
+  });
+
+  document.getElementById('stopPresentationBtn').addEventListener('click', async () => {
+    try {
+      if (presentationConnection) {
+        try { presentationConnection.terminate(); } catch(e){ /* ignore */ }
+        presentationConnection = null;
+        updatePresentationStatus();
+      }
+    } catch (e) {
+      console.warn('Błąd zamykania Presentation:', e);
+    }
+  });
+
+  // DODANE: centralna funkcja wysyłająca komendę — najpierw Presentation, zawsze fallback/emit do socket (by wszyscy klienci dostali komendę)
+  function sendCommand(cmd) {
+    // przygotuj kopię z tokenem dla serwera (jeśli znany)
+    const cmdForSocket = Object.assign({}, cmd);
+    if (token) cmdForSocket.token = token;
+
+    // spróbuj wysłać do Presentation (jeśli aktywne) — ale NIE przerywamy dalszego broadcastu
+    if (presentationConnection) {
+      try {
+        const payload = (typeof cmd === 'object') ? JSON.stringify(cmd) : String(cmd);
+        if (typeof presentationConnection.send === 'function') {
+          presentationConnection.send(payload);
+        } else if (typeof presentationConnection.postMessage === 'function') {
+          presentationConnection.postMessage(payload);
+        } else {
+          console.warn('Brak metody wysyłki w presentationConnection');
+        }
+        document.getElementById('lastCommand').textContent = JSON.stringify(cmd, null, 2);
+      } catch (e) {
+        console.warn('Presentation send failed (kontynuuję emit do serwera):', e);
+      }
+    }
+
+    // ZAWSZE wysyłamy również do serwera, aby inne urządzenia otrzymały komendę
+    try {
+      // najpierw emit przez socket (jeśli działa)
+      try {
+        if (socket && typeof socket.emit === 'function' && socket.connected) {
+          socket.emit('send-command', cmdForSocket);
+          console.log('Wysłano komendę przez socket.emit', cmdForSocket);
+        } else {
+          console.warn('Socket nie jest połączony lub brak emit(). Będzie użyty REST fallback.');
+        }
+      } catch (e) {
+        console.warn('socket.emit failed', e);
+      }
+
+      // dodatkowo wyślij REST POST /api/send-command do wykrytego serverUrl (fallback)
+      (async () => {
+        try {
+          const serverBase = window._panelServerUrl || location.origin;
+          const url = (serverBase.replace(/\/$/,'') + '/api/send-command');
+          const headers = { 'Content-Type': 'application/json' };
+          // dodaj token do header, a także do body dla pewności
+          if (token) headers['Authorization'] = 'Bearer ' + token;
+          const bodyObj = Object.assign({}, cmd);
+          if (token) bodyObj.token = token;
+
+          const res = await fetch(url, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(bodyObj)
+          });
+          if (!res.ok) {
+            let errText = `${res.status} ${res.statusText}`;
+            try { const j = await res.json(); if (j && j.error) errText = j.error; } catch(e){}
+            document.getElementById('cmdError').textContent = 'Błąd wysyłki: ' + errText;
+            console.warn('POST /api/send-command failed', errText, 'url=', url);
+          } else {
+            document.getElementById('cmdError').textContent = '';
+            try {
+              const j = await res.json();
+              document.getElementById('lastCommand').textContent = JSON.stringify(j.sent || cmd, null, 2);
+              console.log('POST /api/send-command ok', j);
+            } catch(e){}
+          }
+        } catch (e) {
+          document.getElementById('cmdError').textContent = 'Błąd połączenia z serwerem przy wysyłce komendy';
+          console.warn('Fetch /api/send-command error', e);
+        }
+      })();
+    } catch (e) {
+      console.warn('sendCommand unexpected error', e);
+    }
+  }
+
+  // helper: render playlist
+  function renderPlaylist(){
+    const list = document.getElementById('playlistList');
+    list.innerHTML = '';
+    playlist.forEach((p, i) => {
+      const li = document.createElement('li');
+      const display = p.type === 'text' ? ('"' + (p.text||'') + '"') : (p.url || '');
+      li.innerHTML = '<div style="flex:1"><strong>' + p.type + '</strong> — ' + display + ' <span class="small">(' + p.duration + 's)</span></div>';
+      const actions = document.createElement('div');
+      const del = document.createElement('button');
+      del.textContent = 'Usuń';
+      del.addEventListener('click', () => { playlist.splice(i,1); renderPlaylist(); });
+      actions.appendChild(del);
+      li.appendChild(actions);
+      list.appendChild(li);
+    });
+  }
+
+  document.getElementById('addBtn').onclick = () => {
+    const raw = document.getElementById('itemUrl').value; // allow empty for text
+    const type = document.getElementById('itemType').value;
+    const duration = parseInt(document.getElementById('itemDuration').value, 10) || 15;
+
+    // pobierz wybrany protokół
+    const protocol = (document.getElementById('protocolSelect') || {}).value || 'https://';
+
+    // dla URL/IMAGE/VIDEO wymagamy niepustego URL, dla TEXT akceptujemy pusty string
+    if (type !== 'text' && !raw.trim()) return alert('Podaj URL!');
+    if (type === 'text') {
+      playlist.push({ type:'text', text: raw, duration });
+    } else {
+      let url = raw.trim();
+      // jeśli brak protokołu, dodaj wybrany
+      if (!/^https?:\/\//i.test(url)) {
+        url = protocol + url;
+      }
+      // dopuszczamy tylko http/https
+      if (!/^https?:\/\//i.test(url)) return alert('Dozwolone tylko protokoły http:// lub https://');
+      playlist.push({ type, url, duration });
+    }
+    document.getElementById('itemUrl').value = '';
+    renderPlaylist();
+  };
+
+  document.getElementById('clearBtn').onclick = () => {
+    playlist.length = 0;
+    renderPlaylist();
+  };
+
+  document.getElementById('loginBtn').onclick = async () => {
+    const username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    try {
+      const res = await fetch('/login', {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({ username, password })
+      });
+      if(!res.ok) throw new Error("Niepoprawny login");
+      const data = await res.json();
+      token = data.token;
+      sessionStorage.setItem('token', token);
+      tokenLabel.textContent = token;
+      loginDiv.style.display='none';
+      panelDiv.style.display='block';
+      fetchStatus();
+    } catch(err) {
+      loginMsg.innerText = err.message;
+    }
+  };
+
+  if(sessionStorage.getItem('token')){
+    token = sessionStorage.getItem('token');
+    tokenLabel.textContent = token;
+    loginDiv.style.display='none';
+    panelDiv.style.display='block';
+    fetchStatus();
+  }
+
+  document.getElementById('startPlaylistBtn').onclick = () => {
+    // Pozwól wysyłać przez Presentation bez tokena; w przeciwnym razie wymaga się zalogowania
+    if(!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
+    const loop = document.getElementById('loopChk').checked;
+    cmdError.textContent = '';
+    sendCommand({ action:'startPlaylist', playlist, loop });
+  };
+
+  document.getElementById('stopPlaylistBtn').onclick = () => {
+    if(!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
+    cmdError.textContent = '';
+    sendCommand({ action:'stopPlaylist' });
+  };
+
+  document.getElementById('showTextBtn').onclick = () => {
+    // Pozwól wysyłać tekst przez Presentation bez logowania; inaczej wymagaj tokena
+    if (!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
+    const text = document.getElementById('customText').value;
+    const duration = parseInt(document.getElementById('textDuration').value, 10) || 0;
+    cmdError.textContent = '';
+    sendCommand({ action: 'showText', text, duration });
+  };
+
+  document.getElementById('logoutBtn').onclick = () => {
+    token = null;
+    sessionStorage.removeItem('token');
+    tokenLabel.textContent = 'brak';
+    panelDiv.style.display='none';
+    loginDiv.style.display='block';
+  };
+
+  document.getElementById('refreshStatusBtn').onclick = fetchStatus;
+
+  socket.on('connect', () => { console.log('socket connected'); });
+  socket.on('disconnect', () => { console.log('socket disconnected'); });
+  socket.on('command-error', (e) => { console.warn('command-error', e); cmdError.textContent = e.error || 'Błąd'; });
+  socket.on('command', (cmd) => {
+    // aktualizuj widok ostatniej komendy na panelu
+    lastCommand.textContent = JSON.stringify(cmd, null, 2);
+    fetchStatus();
+  });
+
+  async function fetchStatus(){
+    try {
+      const res = await fetch('/api/status');
+      if(!res.ok) return;
+      const data = await res.json();
+      clientsCount.textContent = (data.clients && data.clients.length) || 0;
+      lastCommand.textContent = data.lastCommand ? JSON.stringify(data.lastCommand, null, 2) : '';
+    } catch(e) {
+      console.error(e);
+    }
+  }
+
+  // Opcjonalnie: odśwież podgląd automatycznie po otrzymaniu nowej komendy (użyteczne przy debugowaniu)
+  socket.on('command', () => {
+    if (previewChk.checked) {
+      try { previewFrame.contentWindow.location.reload(); } catch(e) { previewFrame.src = '/display.html'; }
+    }
+  });
+
+  // NOWY: otwórz URL natychmiast na wszystkich wyświetlaczach (przez presentation jeśli aktywne, inaczej przez socket)
+  document.getElementById('openUrlBtn').addEventListener('click', () => {
+    if (!token && !presentationConnection) return alert("Nie jesteś zalogowany!");
+    let raw = document.getElementById('itemUrl').value || '';
+    const protocol = (document.getElementById('protocolSelect') || {}).value || 'https://';
+    raw = raw.trim();
+    if (!raw) return alert('Podaj URL!');
+    if (!/^https?:\/\//i.test(raw)) raw = protocol + raw;
+    if (!/^https?:\/\//i.test(raw)) return alert('Dozwolone tylko protokoły http:// lub https://');
+    sendCommand({ action: 'openUrl', url: raw });
+  });
+}
+
+// uruchom inicjalizację panelu
+initPanel().catch(e => console.error('initPanel error', e));
+</script>
+
+</body>
+</html>
